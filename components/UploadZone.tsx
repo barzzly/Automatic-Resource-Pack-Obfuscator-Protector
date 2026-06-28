@@ -21,7 +21,7 @@ export function UploadZone() {
   const inputRef = useRef<HTMLInputElement>(null);
   const workerRef = useRef<Worker | null>(null);
   const [dragging, setDragging] = useState(false);
-  const { file, options, status, warning, setFile, setStatus, setProgress, setResult, setError, reset } = useObfuscatorStore();
+  const { file, status, warning, setFile, setStatus, setProgress, setResult, setError, reset } = useObfuscatorStore();
 
   useEffect(() => {
     if (typeof Worker === 'undefined') return;
@@ -55,12 +55,12 @@ export function UploadZone() {
     setProgress({ step: 'Starting...', percent: 1 });
 
     if (workerRef.current) {
-      workerRef.current.postMessage({ file, options });
+      workerRef.current.postMessage({ file, options: { renameFiles: true, shuffleFolders: false, injectDummy: false, minifyJSON: true, stripPNGMeta: false, corruptHeaders: false, deepObfuscation: false } });
       return;
     }
 
     try {
-      const result = await obfuscate(new Uint8Array(await file.arrayBuffer()), options, (step, percent) => setProgress({ step, percent }));
+      const result = await obfuscate(new Uint8Array(await file.arrayBuffer()), { renameFiles: true, shuffleFolders: false, injectDummy: false, minifyJSON: true, stripPNGMeta: false, corruptHeaders: false, deepObfuscation: false }, (step, percent) => setProgress({ step, percent }));
       setResult(result);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Processing failed.');
@@ -68,10 +68,10 @@ export function UploadZone() {
   };
 
   return (
-    <section className="rounded-lg border border-border bg-surface/85 p-5 shadow-2xl shadow-black/25 backdrop-blur">
+    <section className="rounded-lg border border-border bg-surface/90 p-6 shadow-2xl shadow-black/25 backdrop-blur">
       <div
         className={cn(
-          'relative grid min-h-[360px] place-items-center rounded-lg border-2 border-dashed border-muted bg-background/55 p-6 text-center transition',
+          'relative grid min-h-[420px] place-items-center rounded-lg border-2 border-dashed border-muted bg-background/55 p-6 text-center transition',
           dragging && 'glow-border border-border-accent bg-accent/10',
           file && 'border-border-accent',
         )}
@@ -91,8 +91,8 @@ export function UploadZone() {
           <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg bg-accent/15 text-accent-light glow-purple">
             <Upload className="h-8 w-8" />
           </div>
-          <h2 className="font-display text-2xl font-semibold">{file ? file.name : 'Drop Resource Pack ZIP'}</h2>
-          <p className="mt-2 text-sm leading-6 text-text-muted">{file ? `${formatBytes(file.size)} selected` : 'Drag a .zip here or browse from your device.'}</p>
+          <h2 className="font-display text-2xl font-semibold">{file ? file.name : 'Drop Pack ZIP'}</h2>
+          <p className="mt-2 text-sm leading-6 text-text-muted">{file ? `${formatBytes(file.size)} selected` : 'One click protection: rename textures, fix JSON refs, rewrite texture references, keep Minecraft compatible.'}</p>
           {warning ? <p className="mt-3 text-sm text-warning">{warning}</p> : null}
 
           <div className="mt-6 flex flex-wrap justify-center gap-3">

@@ -4,7 +4,8 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Automatic Resource Pack Obfuscator & Protector',
-  description: 'Protect Minecraft resource packs with client-side ZIP obfuscation.',
+  description: 'Client-side Minecraft resource pack protector by BarzzLy.',
+  icons: { icon: '/BarzzLy.png' },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -109,6 +109,149 @@ function shuffleFolders(files: FileMap) {
   return output;
 }
 
+function stripSingleRootFolder(files: FileMap) {
+  if (files['pack.mcmeta']) return files;
+  const paths = Object.keys(files);
+  const first = paths[0]?.split('/')[0];
+  if (!first) return files;
+  const prefix = `${first}/`;
+  if (!paths.every((path) => path.startsWith(prefix))) return files;
+
+  const output: FileMap = {};
+  for (const [path, data] of Object.entries(files)) output[path.slice(prefix.length)] = data;
+  return output['pack.mcmeta'] ? output : files;
+}
+function textureReferenceFromPath(path: string) {
+  const match = path.match(/^assets\/([^/]+)\/textures\/(.+)\.png$/);
+  if (!match) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
+function textureReferenceAliases(path: string) {
+  const reference = textureReferenceFromPath(path);
+  if (!reference) return [];
+  const [, value] = reference.split(':');
+  return [reference, value];
+}
+
+function collectReferencedTextures(files: FileMap) {
+  const refs = new Set<string>();
+  const textureLike = /(?<![A-Za-z0-9_.:-])(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+/g;
+
+  for (const [path, data] of Object.entries(files)) {
+    if (!/\.(json|mcmeta|properties|txt|yml|yaml|lang|fsh|vsh|glsl)$/i.test(path)) continue;
+    let text = '';
+    try {
+      text = strFromU8(data);
+    } catch {
+      continue;
+    }
+
+    for (const match of text.matchAll(textureLike)) {
+      const value = match[0].replace(/^minecraft:/, 'minecraft:');
+      if (value.includes('/') || value.includes(':')) refs.add(value.replace(/\.png$/i, ''));
+    }
+  }
+
+  return refs;
+}
+
+function textureHasReference(path: string, refs: Set<string>) {
+  const aliases = textureReferenceAliases(path);
+  return aliases.some((alias) => refs.has(alias) || refs.has(alias.replace(/^minecraft:/, '')));
+}
+
+function renamePngAssets(files: FileMap) {
+  const usedReal = new Set<string>();
+  const usedDecoy = new Set<string>();
+  const mapping = new Map<string, string>();
+  const output: FileMap = {};
+  const referencedTextures = collectReferencedTextures(files);
+
+  for (const [path, data] of Object.entries(files)) {
+    if (!/^assets\/[^/]+\/textures\/.+\.png$/.test(path) || !textureHasReference(path, referencedTextures)) {
+      output[path] = data;
+      continue;
+    }
+
+    const match = path.match(/^assets\/([^/]+)\/textures\/(.+)\.png$/)!;
+    const namespace = match[1];
+    const { dirs } = splitPath(path);
+    const realPath = `assets/${namespace}/textures/__barzzly/${uniqueHash(usedReal, 12)}.png`;
+    const decoyPath = [...dirs, `${uniqueHash(usedDecoy, 10)}.png`].join('/');
+
+    output[realPath] = data;
+    output[decoyPath] = crypto.getRandomValues(new Uint8Array(4));
+    mapping.set(path, realPath);
+  }
+
+  for (const [path, data] of Object.entries(files)) {
+    if (!path.endsWith('.png.mcmeta')) continue;
+    const pngPath = path.slice(0, -'.mcmeta'.length);
+    const nextPngPath = mapping.get(pngPath);
+    if (!nextPngPath) continue;
+    delete output[path];
+    output[`${nextPngPath}.mcmeta`] = data;
+  }
+
+  rewriteJsonReferences(output, mapping);
+  rewriteTextReferences(output, mapping);
+  return { files: output, mapping };
+}
+function rewriteTextReferences(files: FileMap, mapping: Map<string, string>) {
+  const pairs: Array<[string, string]> = [];
+  for (const [from, to] of mapping) {
+    const toReference = textureReferenceFromPath(to);
+    if (!toReference) continue;
+    for (const alias of textureReferenceAliases(from)) pairs.push([alias, toReference]);
+  }
+  if (pairs.length === 0) return;
+
+  for (const [path, data] of Object.entries(files)) {
+    if (!/\.(properties|txt|yml|yaml|lang|fsh|vsh|glsl|mcfunction)$/i.test(path)) continue;
+    let text = '';
+    try {
+      text = strFromU8(data);
+    } catch {
+      continue;
+    }
+    for (const [from, to] of pairs) {
+      text = text.split(from).join(to);
+      text = text.split(`${from}.png`).join(`${to}.png`);
+    }
+    files[path] = strToU8(text);
+  }
+}
+function rewriteJsonReferences(files: FileMap, mapping: Map<string, string>) {
+  const refMap = new Map<string, string>();
+  for (const [from, to] of mapping) {
+    const toReference = textureReferenceFromPath(to);
+    if (!toReference) continue;
+    for (const alias of textureReferenceAliases(from)) refMap.set(alias, toReference);
+  }
+
+  if (refMap.size === 0) return;
+
+  const visit = (value: unknown): unknown => {
+    if (typeof value === 'string') return refMap.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(visit);
+    if (value && typeof value === 'object') {
+      for (const key of Object.keys(value as Record<string, unknown>)) {
+        (value as Record<string, unknown>)[key] = visit((value as Record<string, unknown>)[key]);
+      }
+    }
+    return value;
+  };
+
+  for (const [path, data] of Object.entries(files)) {
+    if (!path.endsWith('.json') && !path.endsWith('.mcmeta')) continue;
+    try {
+      files[path] = strToU8(JSON.stringify(visit(JSON.parse(strFromU8(data)))));
+    } catch {
+      // Invalid JSON-like files stay untouched.
+    }
+  }
+}
 function updateSoundReferences(files: FileMap, mapping: Map<string, string>) {
   const referenceMap = new Map<string, string>();
 
@@ -187,6 +330,7 @@ function stripPngMetadata(files: FileMap) {
 function obfuscatePngDatastreams(files: FileMap) {
   for (const [path, data] of Object.entries(files)) {
     if (!path.endsWith('.png') || data.length < 20) continue;
+    if (path.includes('/textures/.arp/')) continue;
     if (data[0] !== 0x89 || data[1] !== 0x50 || data[2] !== 0x4e || data[3] !== 0x47) continue;
 
     const png = data.slice();
@@ -248,43 +392,18 @@ function findEocd(data: Uint8Array) {
   return -1;
 }
 
-function patchCentralDirectoryOffsets(data: Uint8Array, centralDirectoryOffset: number, centralDirectorySize: number, delta: number) {
-  let offset = centralDirectoryOffset;
-  const end = centralDirectoryOffset + centralDirectorySize;
-
-  while (offset + 46 <= end) {
-    if (data[offset] !== 0x50 || data[offset + 1] !== 0x4b || data[offset + 2] !== 0x01 || data[offset + 3] !== 0x02) break;
-
-    const fileNameLength = new DataView(data.buffer, data.byteOffset + offset + 28, 2).getUint16(0, true);
-    const extraFieldLength = new DataView(data.buffer, data.byteOffset + offset + 30, 2).getUint16(0, true);
-    const fileCommentLength = new DataView(data.buffer, data.byteOffset + offset + 32, 2).getUint16(0, true);
-    const localHeaderOffset = readU32LE(data, offset + 42);
-    if (localHeaderOffset !== 0xffffffff) writeU32LE(data, offset + 42, localHeaderOffset + delta);
-
-    offset += 46 + fileNameLength + extraFieldLength + fileCommentLength;
-  }
-}
 function corruptZipHeaders(data: Uint8Array) {
   const eocd = findEocd(data);
   if (eocd < 0) return data;
 
-  const fakeHeader = new Uint8Array([0x50, 0x4b, 0x05, 0x06]);
-  const comment = TEXT_ENCODER.encode(`ARP-${randomHex(256)}`);
-  const output = new Uint8Array(fakeHeader.length + data.length + comment.length);
-  output.set(fakeHeader, 0);
-  output.set(data, fakeHeader.length);
-  output.set(comment, fakeHeader.length + data.length);
-
-  const shiftedEocd = fakeHeader.length + eocd;
-  const centralDirectorySize = readU32LE(output, shiftedEocd + 12);
-  const centralDirectoryOffset = readU32LE(output, shiftedEocd + 16);
-  patchCentralDirectoryOffsets(output, fakeHeader.length + centralDirectoryOffset, centralDirectorySize, fakeHeader.length);
-  writeU32LE(output, shiftedEocd + 16, centralDirectoryOffset + fakeHeader.length);
-  writeU16LE(output, shiftedEocd + 20, comment.length);
+  const comment = TEXT_ENCODER.encode(`ARP-${randomHex(2048)}`);
+  const output = new Uint8Array(data.length + comment.length);
+  output.set(data, 0);
+  output.set(comment, data.length);
+  writeU16LE(output, eocd + 20, comment.length);
 
   return output;
 }
-
 function ensureZip(data: Uint8Array) {
   if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) throw new Error('Invalid ZIP file. Please select a .zip resource pack.');
 }
@@ -292,22 +411,22 @@ function ensureZip(data: Uint8Array) {
 export async function obfuscate(input: Uint8Array, options: ObfuscationOptions, onProgress: ProgressCallback = () => {}): Promise<ObfuscationResult> {
   const started = performance.now();
   const active = options.deepObfuscation
-    ? { ...options, renameFiles: false, shuffleFolders: false, injectDummy: true, minifyJSON: true, stripPNGMeta: true, corruptHeaders: true }
+    ? { ...options, renameFiles: true, shuffleFolders: false, injectDummy: false, minifyJSON: true, stripPNGMeta: false, corruptHeaders: false }
     : options;
 
   ensureZip(input);
   onProgress('Reading files...', 8);
-  let files = await unzipAsync(input);
+  let files = stripSingleRootFolder(await unzipAsync(input));
   if (Object.keys(files).length === 0) throw new Error('ZIP is empty.');
 
   let dummyFilesAdded = 0;
   let mapping = new Map<string, string>();
 
   if (active.renameFiles) {
-    onProgress('Renaming...', 24);
-    const renamed = renameFiles(files);
-    files = renamed.files;
-    mapping = renamed.mapping;
+    onProgress('Renaming PNG assets...', 24);
+    const renamedPng = renamePngAssets(files);
+    files = renamedPng.files;
+    mapping = renamedPng.mapping;
     updateSoundReferences(files, mapping);
   }
 
@@ -329,6 +448,9 @@ export async function obfuscate(input: Uint8Array, options: ObfuscationOptions, 
   if (active.stripPNGMeta) {
     onProgress('Stripping PNG metadata...', 78);
     stripPngMetadata(files);
+  }
+
+  if (active.stripPNGMeta) {
     onProgress('Obfuscating PNG datastreams...', 84);
     obfuscatePngDatastreams(files);
   }
