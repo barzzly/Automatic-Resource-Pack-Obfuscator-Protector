@@ -4,8 +4,8 @@ import { create } from 'zustand';
 import type { ObfuscationOptions, ObfuscationResult, ProgressState } from './types';
 
 const defaultOptions: ObfuscationOptions = {
-  renameFiles: true,
-  shuffleFolders: true,
+  renameFiles: false,
+  shuffleFolders: false,
   injectDummy: false,
   minifyJSON: true,
   stripPNGMeta: true,
@@ -58,8 +58,8 @@ export const useObfuscatorStore = create<ObfuscatorStore>((set) => ({
       if (preset === 'maximum') {
         return {
           options: {
-            renameFiles: true,
-            shuffleFolders: true,
+            renameFiles: false,
+            shuffleFolders: false,
             injectDummy: true,
             minifyJSON: true,
             stripPNGMeta: true,

@@ -6,12 +6,12 @@ import type { ObfuscationOptions } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const options: Array<{ key: keyof ObfuscationOptions; label: string; hint: string; risky?: boolean }> = [
-  { key: 'renameFiles', label: 'Rename Files', hint: 'Random hash filenames. pack.mcmeta and pack.png stay untouched.' },
-  { key: 'shuffleFolders', label: 'Shuffle Folder Structure', hint: 'Random folder names while preserving required Minecraft roots.' },
+  { key: 'renameFiles', label: 'Rename Loose Files', hint: 'Only renames non-assets/non-data loose files, so Minecraft references stay valid.' },
+  { key: 'shuffleFolders', label: 'Shuffle Loose Folders', hint: 'Only shuffles folders outside assets/ and data/ to avoid broken textures.' },
   { key: 'injectDummy', label: 'Inject Dummy Files', hint: 'Adds believable empty or tiny files across nested folders.' },
   { key: 'minifyJSON', label: 'Minify JSON', hint: 'Strips whitespace from valid .json files.' },
-  { key: 'stripPNGMeta', label: 'Strip PNG Metadata', hint: 'Removes safe non-critical PNG chunks.' },
-  { key: 'corruptHeaders', label: 'Corrupt ZIP Headers', hint: 'Adds trailing ZIP garbage for extra extraction friction.', risky: true },
+  { key: 'stripPNGMeta', label: 'Strip + Obfuscate PNG', hint: 'Removes metadata and applies PackSquash-style CRC/Adler PNG protection.' },
+  { key: 'corruptHeaders', label: 'Protect ZIP Layer', hint: 'Adds EOCD comment/header noise inspired by PackSquash ZIP protection.', risky: true },
   { key: 'deepObfuscation', label: 'Deep Obfuscation', hint: 'Enables every technique. Slower and more aggressive.', risky: true },
 ];
 
